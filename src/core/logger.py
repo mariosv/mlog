@@ -19,6 +19,8 @@ import datetime
 from db import *
 from errors import *
 
+from sqlalchemy.orm import relation, sessionmaker, relationship, backref
+
 class Logger(object):
     def __init__(self, options):
         """Creates a Logger options with the given configuration
@@ -27,10 +29,12 @@ class Logger(object):
                 options    An initialized ProgramOptions object
 
         """
-        if len(options.logFile) == 0:
+        self.__session = None
+
+        if options.dbPath is None:
             self.__logFilePath = os.path.join(os.environ['HOME'], '.mlog-db')
         else:
-            self.__logFilePath = options.logFile
+            self.__logFilePath = options.dbPath
 
         self.__searchKeyword = options.searchKeyword
         self.__beforeDate = self.__recreateDate(options.beforeDate)
@@ -152,6 +156,9 @@ class Logger(object):
 
     def __closeDBSession(self):
         """Commits changes to the database"""
+        if self.__session is None:
+           return
+
         try:
             self.__session.commit()
         except Exception as error:
@@ -167,15 +174,16 @@ class Logger(object):
         ds = ds.replace(']', '')
         if len(ds) == 0:
             return None
-        (date, time) = ds.split('T')
-        (y, m, d) = date.split('-')
-        (h, minutes, s) = time.split(':')
 
         try:
+            (date, time) = ds.split('T')
+            (y, m, d) = date.split('-')
+            (h, minutes, s) = time.split(':')
+
             newDate = datetime.datetime(int(y), int(m), int(d),
                                         int(h), int(minutes), int(float(s)))
+            return newDate
         except ValueError, e:
-            print(e)
-            sys.exit(1)
-        return newDate
+            raise ConfigError('Invalid date string: %s' % (dateString))
+
 

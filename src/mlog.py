@@ -43,18 +43,21 @@ class ProgramOptions(object):
 
        Attributes:
             inputFile       an input file name to log it's contents
-            logFile         a log file to write the database instead of the
-                            standard log
+            dbPath          a log file to write the database instead of the
+                            standard log path
             afterDate       Search start date. Start search logs after this
                             date.
             beforeDate      Search end date. End searching logs after this date
             logId           A logId. Used for the DELETE operation
             searchKeyword   Search keyword for SEARCH operation
             message         Message to log
+
+       Raises:
+            ConfigError
                                 
        """
-    inputFile = ''
-    logFile = ''
+    inputFile = None
+    dbPath = None
     afterDate = ''
     beforeDate = ''
     logId = ''
@@ -65,7 +68,7 @@ class ProgramOptions(object):
         (self.__options, self.__args) = self.__parseCLOptions()
 
         self.inputFile = self.__options.inputFile
-        self.logFile = self.__options.logFile
+        self.dbPath = self.__options.dbPath
         self.afterDate = self.__options.afterDate
         self.beforeDate = self.__options.beforeDate
 
@@ -85,6 +88,7 @@ class ProgramOptions(object):
                 raise ConfigError('Too many arguments for list command')
             if len(self.__args) == 2:
                 self.searchKeyword = self.__args[1]
+
         # parse the message for add command
         elif self.command == ProgramCommands.ADD:
             self.message = self.__parseMessage()
@@ -103,47 +107,69 @@ class ProgramOptions(object):
 
 
     def __parseMessage(self):
-        message = ''
-        if len(self.__options.inputFile) == 0:
-            message = ' '.join(self.__args[1:])
-        else:
-            fd = open(self.__options.inputFile)
-            message = fd.read()
-            fd.close()
-        message += '\n'
+        """Parses the log message text:
+            1. If an input file is specified, its contents are used as the log
+               message text. If filename provided is '-', stdin is parsed
+            2. If no input file is specified, either any text after the add
+               command is used or input is expected from stdin
 
-        msg_copy = message.strip()
-        if len(msg_copy) != 0:
-            return message
-        else:
-            message = raw_input()
+        """
+        message = ''
+        if self.__options.inputFile is None:
+            # no input file provided
+            message = ' '.join(self.__args[1:])
             msg_copy = message.strip()
             if len(msg_copy) != 0:
                 return message
+            else:
+                message = sys.stdin.read()
+                print('')
+                msg_copy = message.strip()
+                if len(msg_copy) != 0:
+                    return message.strip()
+        else:
+            # parse input file
+            if self.__options.inputFile == '-':
+                # parse standard input
+                message = sys.stdin.read()
+                print('')
+            else:
+                try:
+                    fd = open(self.__options.inputFile)
+                    message = fd.read()
+                    fd.close()
+                except IOError as error:
+                    raise ConfigError(str(error))
+            return message.strip()
 
 
     def __findTags(self, tagList):
+        """Split a tag string to a list of tags. Tags can be given with any
+           seperator. But it's tag can be only a single word
+
+        """
         tags = []
         if len(self.__options.tagList.strip()) != 0:
-            splitted = [x.strip() for x in self.__options.tagList.split()]
-            splitted = [x.lower() for x in splitted if len(x) > 0]
-            tags = splitted
+            tags = [x.lower() for x in re.findall('\w+', tagList)]
         return tags
 
 
-
     def __determineCommand(self):
-        # Available commands: list, add, del, edit
-        validCommands = ('list', 'ls', 'add', 'delete', 'del', 'modify', 'edit'
+        """Parse the command argument and determine which operation should be
+           executed
+
+        """
+        validCommands = ('list', 'ls', 'add', 'delete', 'del', 'modify', 'edit',
                          'tags', 'list-tags')
         if len(self.__args) == 0:
-            return ProgramCommands.ADD
+            raise ConfigError('No command specified')
 
-        if len(self.__args) > 1 and self.__args[0] not in validCommands:
-            sys.stderr.write("Invalid command:\n Available commands are: "
-                             "list, add, delete, edit\n")
-            sys.exit(os.EX_CONFIG)
         cmd = self.__args[0]
+
+        if cmd not in validCommands:
+            err = "Invalid command: %s\n Valid commands are: %s\n" % (cmd,
+                    validCommands)
+            raise ConfigErr(err)
 
         if cmd in ('ls', 'list'):
             command = ProgramCommands.LIST
@@ -156,7 +182,7 @@ class ProgramOptions(object):
         elif cmd in ('tags', 'list-tags'):
             command = ProgramCommands.LIST_TAGS
         else:
-            command = ProgramCommands.ADD
+            raise ConfigError('Unknown command: %s' % cmd)
 
         return command
 
@@ -167,7 +193,7 @@ class ProgramOptions(object):
 
         """
         usage = "Usage: %prog <command> [options]\n" \
-                "Available commands: list add delete edit"
+                "Available commands: list add delete edit tags"
 
         parser = optparse.OptionParser(usage=usage)
 
@@ -175,13 +201,13 @@ class ProgramOptions(object):
         parser.add_option('-i', '--input-file',
                           dest = 'inputFile',
                           help = 'File containing text to be logged',
-                          default = '',
+                          default = None,
                           metavar = 'INPUT_FILE')
-        parser.add_option('-o', '--log-file',
-                          dest = 'logFile',
-                          default = '',
+        parser.add_option('-d', '--db-path',
+                          dest = 'dbPath',
+                          default = None,
                           help = 'File to be used as logfile',
-                          metavar = 'OUTPUT_FILE')
+                          metavar = 'DATABASE_PATH')
         parser.add_option('-a', '--after',
                           dest = 'afterDate',
                           default = '',
@@ -204,11 +230,7 @@ class ProgramOptions(object):
 
 
 def main():
-    try:
-        options = ProgramOptions()
-    except ConfigError as error:
-         sys.stderr.write(str(error) + '\n')
-         sys.exit(os.EX_CONFIG)
+    options = ProgramOptions()
 
     logger = Logger(options)
 
@@ -225,5 +247,13 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
-
+    try:
+        main()
+    except ConfigError as error:
+         sys.stderr.write(str(error) + '\n')
+         sys.exit(os.EX_CONFIG)
+    except Error as error:
+         sys.stderr.write(str(error) + '\n')
+         sys.exit(os.EX_SOFTWARE)
+        
+        
