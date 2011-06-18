@@ -27,9 +27,6 @@ class Logger(object):
                 options    An initialized ProgramOptions object
 
         """
-        self.__configFilePath = options.configFile
-
-
         if len(options.logFile) == 0:
             self.__logFilePath = os.path.join(os.environ['HOME'], '.mlog-db')
         else:
