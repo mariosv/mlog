@@ -18,7 +18,7 @@
 class Error(Exception):
     """Base Error class of all mlog error classses"""
     def __init__(self, msg):
-        super(Exception, self).__init__(msg)
+        super(Exception, self).__init__('Error: ' + str(msg))
 
 
 class ConfigError(Error):
@@ -27,5 +27,5 @@ class ConfigError(Error):
 
     """
     def __init__(self, msg):
-        super(Error, self).__init__('Configuration error: ' + str(msg))
+        super(Error, self).__init__('Configuration Error: ' + str(msg))
 

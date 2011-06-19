@@ -92,7 +92,7 @@ class ProgramOptions(object):
         # parse the message for add command
         elif self.command == ProgramCommands.ADD:
             self.message = self.__parseMessage()
-        elif self.command == ProgramCommands.DELETE:
+        elif self.command in (ProgramCommands.DELETE, ProgramCommands.EDIT):
             err = 'A valid log id must be provided'
             if len(self.__args) == 2:
                 try:
@@ -145,12 +145,16 @@ class ProgramOptions(object):
 
     def __findTags(self, tagList):
         """Split a tag string to a list of tags. Tags can be given with any
-           seperator. But it's tag can be only a single word
+           seperator. But it's tag can be only a single word.
+
+           If tags are not specified at all None is returned
 
         """
-        tags = []
-        if len(self.__options.tagList.strip()) != 0:
-            tags = [x.lower() for x in re.findall('\w+', tagList)]
+        tags = self.__options.tagList
+        if tags is not None:
+            tags = []
+            if len(self.__options.tagList.strip()) != 0:
+                tags = [x.lower() for x in re.findall('\w+', tagList)]
         return tags
 
 
@@ -220,7 +224,7 @@ class ProgramOptions(object):
                           metavar = 'BEFORE_DATE')
         parser.add_option('-t', '--tags',
                           dest = 'tagList',
-                          default = '',
+                          default = None,
                           help = 'List of tags for the new log',
                           metavar = 'TAGS')
 
@@ -239,7 +243,7 @@ def main():
     elif options.command == ProgramCommands.ADD:
         logger.appendLog(options.message)
     elif options.command == ProgramCommands.EDIT:
-        pass
+        logger.editLogWithId(options.logId)
     elif options.command == ProgramCommands.DELETE:
         logger.deleteLogWithId(options.logId)
     elif options.command == ProgramCommands.LIST_TAGS:

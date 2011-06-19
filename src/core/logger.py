@@ -15,6 +15,8 @@
 import os
 import sys
 import datetime
+import tempfile
+import subprocess
 
 from db import *
 from errors import *
@@ -45,13 +47,17 @@ class Logger(object):
         self.__startDBSession()
 
 
+    def __del__(self):
+        """Makes sure database is "closed" - changes are submited"""
+        self.__closeDBSession()
+
+
     def printLogs(self):
         """Print all logs matching the given(if any) search criteria and tags
 
         """
-
         logs = []
-        if len(self.__appliedTags) > 0:
+        if self.__appliedTags is not None and len(self.__appliedTags) > 0:
             tList = []
             for tag in self.__appliedTags:
                 # find tag
@@ -77,14 +83,49 @@ class Logger(object):
             print("%6d: %s" % (logsPerTag, tagName))
 
 
+    def appendLog(self, message):
+        """Appends a log to the database"""
+        log = Log(message.strip())
+
+        if self.__appliedTags is not None:
+            for t in self.__appliedTags:
+                tag = self.__getOrCreateTag(t)
+                log.tags.append(tag)
+        self.__session.add(log)
+
+
     def deleteLogWithId(self, logId):
         """Delete the log with the provided log id"""
         log = self.__session.query(Log).get(logId)
         if log:
             self.__session.delete(log)
         else:
-            sys.stderr.write("Log with id: " + str(logId) \
-                             + " was not found in the database\n")
+            e = ("Log with id: " + str(logId) \
+                 + " was not found in the database\n")
+            raise Error(e)
+
+
+    def editLogWithId(self, logId):
+        """Launches users default editor to edit the contents of the log with
+           the provided id. If a tag list is provided it is used to replace
+           current tags
+
+        """
+        # find log in the database 
+        log = self.__session.query(Log).get(logId)
+        if not log:
+            e = ("Log with id: " + str(logId) \
+                 + " was not found in the database\n")
+            raise Error(e)
+        # edit log message and replace the original
+        log.message = self.__editMessageInExternalEditor(log.message)
+
+        # change tags
+        if self.__appliedTags is not None:
+            tagList = []
+            for tag in self.__appliedTags:
+                tagList.append(self.__getOrCreateTag(tag))
+            log.tags = tagList
 
 
     def __printLog(self, log):
@@ -101,20 +142,19 @@ class Logger(object):
         print('\n<%s>\n' % (', '.join([x.name for x in log.tags])))
 
 
+    def __getOrCreateTag(self, tagName):
+        """Searches db for a tag with the given name. If none is found it
+           creates one
 
-    def appendLog(self, message):
-        """Appends a log to the database"""
-        log = Log(message.strip())
-
-        for t in self.__appliedTags:
-            dbTag = self.__session.query(Tag).filter(Tag.name == t)
-            if(len(dbTag.all()) != 1):
-                tag = Tag(t)
-            else:
-                tag = dbTag[0]
-            log.tags.append(tag)
+        """
+        dbTag = self.__session.query(Tag).filter(Tag.name == tagName)
+        if(len(dbTag.all()) != 1):
+            tag = Tag(tagName)
             self.__session.add(tag)
-        self.__session.add(log)
+        else:
+            tag = dbTag[0]
+
+        return tag
 
 
     def __logMatches(self, log):
@@ -138,11 +178,6 @@ class Logger(object):
                 matchAfter = False
 
         return (matchSearch and matchBefore and matchAfter)
-
-
-    def __del__(self):
-        """Makes sure database is "closed" - changes are submited"""
-        self.__closeDBSession()
 
 
     def __startDBSession(self):
@@ -174,7 +209,6 @@ class Logger(object):
         ds = ds.replace(']', '')
         if len(ds) == 0:
             return None
-
         try:
             (date, time) = ds.split('T')
             (y, m, d) = date.split('-')
@@ -186,4 +220,47 @@ class Logger(object):
         except ValueError, e:
             raise ConfigError('Invalid date string: %s' % (dateString))
 
+
+    def __editMessageInExternalEditor(self, original):
+        """Launches an external editor to edit the given message string"""
+        (fd, name) = tempfile.mkstemp(prefix="mlog-temp-file-")
+        try:
+            # write original text on the temp file
+            tmp = os.fdopen(fd, 'w')
+            tmp.write(original)
+            tmp.close()
+            # launch external editor to edit the message
+            userEditor = self.__getEditor()
+            subprocess.call((userEditor, name))
+            # read the modified file
+            tmp = open(name)
+            newMessage = tmp.read()
+            tmp.close()
+        except OSError:
+            e = "Editor \"%s\" was not found.\nSet the EDITOR or VISUAL " \
+                "environment variable to point to a valid text editor." \
+                % (userEditor)
+            raise Error(e)
+        except Exception as error:
+            raise Error('Error editing message: %s' % str(error))
+        finally:
+            os.unlink(name)
+        return newMessage
+            
+
+    def __getEditor(self):
+        """Return editor to use
+           
+           Attempts to find user default editor and return the command string
+           to call it. If it is not found vi is used
+
+        """
+        userEditor = 'vi'
+        visual = os.environ.get('VISUAL')
+        if visual:
+            userEditor = visual
+        editor = os.environ.get('EDITOR')
+        if editor:
+            userEditor = editor
+        return userEditor
 
