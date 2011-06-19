@@ -64,8 +64,12 @@ class Logger(object):
                 t = self.__session.query(Tag).filter(Tag.name == tag).all()
                 if len(t) == 1:
                     tList.append(t[0])
-            for t in tList:
-                logs += self.__session.query(Log).filter(Log.tags.contains(t))
+                else:
+                    # all given tags must exist in the database
+                    e = "Tag \"%s\" does not exist in the database" % tag
+                    raise Error(e)
+            clauses = and_(* [Log.tags.contains(x) for x in tList])
+            logs = self.__session.query(Log).filter(clauses) 
         else:
             logs = self.__session.query(Log)
 
