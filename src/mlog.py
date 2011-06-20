@@ -173,7 +173,7 @@ class ProgramOptions(object):
         if cmd not in validCommands:
             err = "Invalid command: %s\n Valid commands are: %s\n" % (cmd,
                     validCommands)
-            raise ConfigErr(err)
+            raise ConfigError(err)
 
         if cmd in ('ls', 'list'):
             command = ProgramCommands.LIST
