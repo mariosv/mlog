@@ -21,11 +21,46 @@
 
 import os
 import sys
-import optparse
+import argparse
 import re
 
-from core.errors import *
-from core.logger import *
+from core.errors import Error, ConfigError
+from core.logger import Logger
+
+
+class AliasedSubParsersAction(argparse._SubParsersAction):
+    """Aliases for argparse positional arguments.
+    https://gist.github.com/471779
+    """
+
+    class _AliasedPseudoAction(argparse.Action):
+        def __init__(self, name, aliases, help):
+            dest = name
+            if aliases:
+                dest += ' (%s)' % ','.join(aliases)
+            sup = super(AliasedSubParsersAction._AliasedPseudoAction, self)
+            sup.__init__(option_strings=[], dest=dest, help=help)
+
+    def add_parser(self, name, **kwargs):
+        if 'aliases' in kwargs:
+            aliases = kwargs['aliases']
+            del kwargs['aliases']
+        else:
+            aliases = []
+
+        parser = super(AliasedSubParsersAction, self).add_parser(name, **kwargs)
+
+        # Make the aliases work.
+        for alias in aliases:
+            self._name_parser_map[alias] = parser
+        # Make the help text reflect them, first removing old help entry.
+        if 'help' in kwargs:
+            help = kwargs.pop('help')
+            self._choices_actions.pop()
+            pseudo_action = self._AliasedPseudoAction(name, aliases, help)
+            self._choices_actions.append(pseudo_action)
+
+        return parser
 
 
 class ProgramCommands(object):
@@ -54,7 +89,7 @@ class ProgramOptions(object):
 
        Raises:
             ConfigError
-                                
+
        """
     inputFile = None
     dbPath = None
@@ -65,45 +100,39 @@ class ProgramOptions(object):
     message = ''
 
     def __init__(self):
-        (self.__options, self.__args) = self.__parseCLOptions()
+        # defaults
+        self.searchKeyword = None
+        self.tags = []
 
-        self.inputFile = self.__options.inputFile
-        self.dbPath = self.__options.dbPath
-        self.afterDate = self.__options.afterDate
-        self.beforeDate = self.__options.beforeDate
+        # argparse Namespace object
+        args_ns = self.__parseCLOptions()
+
+        self.__args = args_ns._get_args()
+        self.__options = dict(args_ns._get_kwargs())
+
+        # global options
+        self.dbPath = self.__options.get('dbPath')
 
         self.logId = -1
 
-        self.searchKeyword = ''
-        self.message = ''
+        self.command = self.__options.get('command', ProgramCommands.LIST)
 
-        self.command = self.__determineCommand()
-
-        # parse tag list
-        self.tags = self.__findTags(self.__options.tagList)
-
-        # get search keyword
         if self.command == ProgramCommands.LIST:
-            if len(self.__args) > 2:
-                raise ConfigError('Too many arguments for list command')
-            if len(self.__args) == 2:
-                self.searchKeyword = self.__args[1]
+            self.tags = self.__findTags(self.__options.get('tagList', []))
+            self.afterDate = self.__options.get('afterDate')
+            self.beforeDate = self.__options.get('beforeDate')
+            self.searchKeyword = self.__options.get('searchKeyword', '')
 
         # parse the message for add command
         elif self.command == ProgramCommands.ADD:
             self.message = self.__parseMessage()
+            self.tags = self.__findTags(self.__options.get('tagList', []))
+
+        # handle update/removal
         elif self.command in (ProgramCommands.DELETE, ProgramCommands.EDIT):
-            err = 'A valid log id must be provided'
-            if len(self.__args) == 2:
-                try:
-                    self.logId = int(self.__args[1])
-                except ValueError as e:
-                    raise ConfigError(err + str(e))
-            else:
-                raise ConfigError(err)
-        elif self.command == ProgramCommands.LIST_TAGS:
-            if len(self.__args) != 1:
-                raise ConfigError("Too many arguments for tags command")
+            self.tags = self.__findTags(self.__options.get('tagList', None))
+            self.inputFile = self.__options.get('inputFile', None)
+            self.logId = self.__options.get('entry_id')
 
 
     def __parseMessage(self):
@@ -115,7 +144,8 @@ class ProgramOptions(object):
 
         """
         message = ''
-        if self.__options.inputFile is None:
+        inputFile = self.__options.get('inputFile')
+        if inputFile is None:
             # no input file provided
             message = ' '.join(self.__args[1:])
             msg_copy = message.strip()
@@ -129,13 +159,13 @@ class ProgramOptions(object):
                     return message.strip()
         else:
             # parse input file
-            if self.__options.inputFile == '-':
+            if inputFile == '-':
                 # parse standard input
                 message = sys.stdin.read()
                 print('')
             else:
                 try:
-                    fd = open(self.__options.inputFile)
+                    fd = open(inputFile)
                     message = fd.read()
                     fd.close()
                 except IOError as error:
@@ -144,17 +174,22 @@ class ProgramOptions(object):
 
 
     def __findTags(self, tagList):
-        """Split a tag string to a list of tags. Tags can be given with any
-           seperator. But it's tag can be only a single word.
-
-           If tags are not specified at all None is returned
-
+        """Get tags options and do some extra parsing to match comma
+        seperated tags. Return None if tags not set in command line
         """
-        tags = self.__options.tagList
-        if tags is not None:
-            tags = []
-            if len(self.__options.tagList.strip()) != 0:
-                tags = [x.lower() for x in re.findall('\w+', tagList)]
+
+        if not tagList:
+            return None
+
+        tags = []
+        for t in tagList:
+            tag_splits = t.split(',')
+            if len(tag_splits) > 0:
+                for newtag in tag_splits:
+                    tags.append(newtag)
+            else:
+                tags.append(t.replace(",",""))
+
         return tags
 
 
@@ -196,46 +231,89 @@ class ProgramOptions(object):
            parsed values and a list with the non parsable values
 
         """
-        usage = "Usage: %prog <command> [options]\n" \
-                "Available commands: list add delete edit tags"
 
-        parser = optparse.OptionParser(usage=usage)
+        parser = argparse.ArgumentParser(conflict_handler='resolve')
+        parser.register('action', 'parsers', AliasedSubParsersAction)
+        subparsers = parser.add_subparsers()
 
-        # build mode option
-        parser.add_option('-i', '--input-file',
-                          dest = 'inputFile',
-                          help = 'File containing text to be logged',
-                          default = None,
-                          metavar = 'INPUT_FILE')
-        parser.add_option('-d', '--db-path',
+        # database argument
+        parser.add_argument('-d', '--db-path',
                           dest = 'dbPath',
                           default = None,
                           help = 'File to be used as logfile',
                           metavar = 'DATABASE_PATH')
-        parser.add_option('-a', '--after',
+
+        # list parser
+        parser_list = subparsers.add_parser('list', aliases=['l','ls', 'll'],
+                                            help = 'List existing log entries',)
+        parser_list.add_argument('-a', '--after',
                           dest = 'afterDate',
                           default = '',
                           help = 'Return logs after the given (ISO) date',
                           metavar = 'AFTER_DATE')
-        parser.add_option('-b', '--before',
+        parser_list.add_argument('-b', '--before',
                           dest = 'beforeDate',
                           default = '',
                           help = 'Return logs before the given (ISO) date',
                           metavar = 'BEFORE_DATE')
-        parser.add_option('-t', '--tags',
+        parser_list.add_argument('-t', '--tags',
                           dest = 'tagList',
                           default = None,
+                          nargs = '+',
+                          help = 'List of tags to filter results',
+                          metavar = 'TAGS')
+
+        # add parser
+        parser_add = subparsers.add_parser('add', aliases=['a'],
+                                           help = 'Create new log entries')
+        parser_add.add_argument('-i', '--input-file',
+                          dest = 'inputFile',
+                          help = 'File containing text to be logged',
+                          default = None,
+                          metavar = 'INPUT_FILE')
+        parser_add.add_argument('-t', '--tags',
+                          dest = 'tagList',
+                          default = None,
+                          nargs = '+',
                           help = 'List of tags for the new log',
                           metavar = 'TAGS')
 
-        (options, args) = parser.parse_args()
-        return (options, args)
+        # edit/delete parsers
+        parser_edit = subparsers.add_parser('edit', aliases=['e'],
+                                            help = 'Edit existing log entries',
+                                            parents=[parser_add],
+                                            conflict_handler='resolve')
+        parser_edit.add_argument('entry_id', help = 'Entry to edit')
+        parser_delete = subparsers.add_parser('delete',
+                                              aliases = ['del', 'd'],
+                                              help = 'Remove existing '
+                                                     'log entries')
+        parser_delete.add_argument('entry_id', help = 'Entry to delete')
+        # tags list parser
+        parser_list_tags = subparsers.add_parser('tags', aliases=['lt',
+                                                                  'list-tags'],
+                                                 help = 'List existing '
+                                                        'log entries')
+
+        # commands
+        parser_add.set_defaults(command=ProgramCommands.ADD)
+        parser_list.set_defaults(command=ProgramCommands.LIST)
+        parser_edit.set_defaults(command=ProgramCommands.EDIT)
+        parser_delete.set_defaults(command=ProgramCommands.DELETE)
+        parser_list_tags.set_defaults(command=ProgramCommands.LIST_TAGS)
+
+        # no args, show list command
+        if (len(sys.argv) < 2):
+            options = parser.parse_args(['list'])
+        else:
+            options = parser.parse_args()
+
+        return options
 
 
 
 def main():
     options = ProgramOptions()
-
     logger = Logger(options)
 
     if options.command == ProgramCommands.LIST:
@@ -259,5 +337,5 @@ if __name__ == '__main__':
     except Error as error:
          sys.stderr.write(str(error) + '\n')
          sys.exit(os.EX_SOFTWARE)
-        
-        
+
+
