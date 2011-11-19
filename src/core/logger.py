@@ -26,7 +26,7 @@ from sqlalchemy.orm import relation, sessionmaker, relationship, backref
 class Logger(object):
     def __init__(self, options):
         """Creates a Logger options with the given configuration
-           
+
            Arguments:
                 options    An initialized ProgramOptions object
 
@@ -69,7 +69,7 @@ class Logger(object):
                     e = "Tag \"%s\" does not exist in the database" % tag
                     raise Error(e)
             clauses = and_(* [Log.tags.contains(x) for x in tList])
-            logs = self.__session.query(Log).filter(clauses) 
+            logs = self.__session.query(Log).filter(clauses)
         else:
             logs = self.__session.query(Log)
 
@@ -115,7 +115,7 @@ class Logger(object):
            current tags
 
         """
-        # find log in the database 
+        # find log in the database
         log = self.__session.query(Log).get(logId)
         if not log:
             e = ("Log with id: " + str(logId) \
@@ -178,7 +178,7 @@ class Logger(object):
                 matchBefore = False
 
         if self.__afterDate:
-            if dateFound < self.__afterDate:
+            if log.date < self.__afterDate:
                 matchAfter = False
 
         return (matchSearch and matchBefore and matchAfter)
@@ -207,6 +207,8 @@ class Logger(object):
 
     def __recreateDate(self, dateString):
         """Creates a Date object from a date string"""
+        if (isinstance(dateString, datetime.datetime)):
+            return dateString
         if len(dateString) == 0:
             return None
         ds = dateString.replace('[', '')
@@ -250,11 +252,11 @@ class Logger(object):
         finally:
             os.unlink(name)
         return newMessage
-            
+
 
     def __getEditor(self):
         """Return editor to use
-           
+
            Attempts to find user default editor and return the command string
            to call it. If it is not found vi is used
 
