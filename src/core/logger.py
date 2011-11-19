@@ -207,6 +207,8 @@ class Logger(object):
 
     def __recreateDate(self, dateString):
         """Creates a Date object from a date string"""
+        if (isinstance(dateString, datetime.datetime)):
+            return dateString
         if len(dateString) == 0:
             return None
         ds = dateString.replace('[', '')

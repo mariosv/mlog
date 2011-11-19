@@ -24,6 +24,16 @@ import sys
 import argparse
 import re
 
+PARSEDATETIME = True
+try:
+    import parsedatetime.parsedatetime as pdt
+    import parsedatetime.parsedatetime_consts as pdc
+except:
+    PARSEDATETIME = False
+
+
+from datetime import datetime
+
 from core.errors import Error, ConfigError
 from core.logger import Logger
 
@@ -118,9 +128,19 @@ class ProgramOptions(object):
         self.command = self.__options.get('command', ProgramCommands.LIST)
 
         if self.command == ProgramCommands.LIST:
+
+            self.filterString = self.__options.get('dateFilter', None)
             self.tags = self.__findTags(self.__options.get('tagList', []))
-            self.afterDate = self.__options.get('afterDate')
-            self.beforeDate = self.__options.get('beforeDate')
+
+            # filter dates, if no dateFilter set, fallback to explicit
+            # date options
+            if self.filterString:
+                self.afterDate, self.beforeDate = \
+                                        self.__parseDateFilter(self.filterString)
+            else:
+                self.afterDate = self.__options.get('afterDate')
+                self.beforeDate = self.__options.get('beforeDate')
+
             self.searchKeyword = self.__options.get('searchKeyword', '')
 
         # parse the message for add command
@@ -134,6 +154,30 @@ class ProgramOptions(object):
             self.inputFile = self.__options.get('inputFile', None)
             self.logId = self.__options.get('entry_id')
 
+
+    def __parseDateFilter(self, dateString):
+        """ Parse a date string using parsedatetime module.
+        Returns a tuple of date objects representing a date range.
+        """
+        # thats how parsedatetime module works
+        c = pdc.Constants()
+        p = pdt.Calendar(c)
+
+        parsed, what = p.parse(dateString)
+        now = datetime.now()
+
+        # thats how parsedatetime module works
+        # http://goo.gl/EGq6Y
+        if what in (1,2):
+            dt = datetime(*parsed[:6])
+        else:
+            dt = parsed
+
+        # return date range
+        if dt > now:
+            return now, dt
+        else:
+            return dt, now
 
     def __parseMessage(self):
         """Parses the log message text:
@@ -262,6 +306,12 @@ class ProgramOptions(object):
                           nargs = '+',
                           help = 'List of tags to filter results',
                           metavar = 'TAGS')
+        if PARSEDATETIME:
+            parser_list.add_argument('-df', '--date-filter',
+                              dest = 'dateFilter',
+                              default = '',
+                              help = 'Date filter (e.g. "2 days ago")',
+                              metavar = 'DATE_FILTER_STRING')
 
         # add parser
         parser_add = subparsers.add_parser('add', aliases=['a'],
